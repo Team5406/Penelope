@@ -5,17 +5,18 @@ import ca._5406.util.CurrentLimiter;
 import ca._5406.util.Looper;
 import ca._5406.util.Motors;
 import com.ctre.phoenix.motorcontrol.ControlMode;
+import com.ctre.phoenix.motorcontrol.FeedbackDevice;
 import com.ctre.phoenix.motorcontrol.NeutralMode;
 import com.ctre.phoenix.motorcontrol.can.WPI_TalonSRX;
 import edu.wpi.first.wpilibj.DoubleSolenoid;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 
-public class Drive implements Looper.Loopable {
+public class Drive {
   
   private static final Drive drivetrain = new Drive();
   
   private static final double HIGH_GEAR_RATIO = 7.08;
-  private static final double LOW_GEAR_RATIO = 26.04;
+  private static final double LOW_GEAR_RATIO = 15.32;
   
   private DoubleSolenoid shiftSolenoid = new DoubleSolenoid(0, 1);
   private NeutralMode lastNeutralMode = NeutralMode.Coast;
@@ -25,12 +26,9 @@ public class Drive implements Looper.Loopable {
   private WPI_TalonSRX rightMaster = initMasterTalon(4, false);
   private WPI_TalonSRX rightFollower1 = initFollowerTalon(5, rightMaster);
   private WPI_TalonSRX rightFollower2 = initFollowerTalon(6, rightMaster);
-  private CurrentLimiter currentLimiter = new CurrentLimiter(Motors.CIM, 50);
-  private BrownoutMonitor brownoutMonitor = new BrownoutMonitor(Motors.CIM, 3, 8);
+  public BrownoutMonitor brownoutMonitor = new BrownoutMonitor(Motors.CIM, 3, 10);
   
-  private double desiredLeftPower = 0;
-  private double desiredRightPower = 0;
-  private boolean currentLimitingEnabled = false;
+  private double currentScaleFactor = 1.0;
   
   private Drive(){
     shiftSolenoid.set(Gear.LOW.value);
@@ -40,32 +38,21 @@ public class Drive implements Looper.Loopable {
     return drivetrain;
   }
   
-  @Override
-  public void update(){
-    double leftSetpoint = desiredLeftPower;
-    double rightSetpoint = desiredRightPower;
-    
-    if(currentLimitingEnabled){
-      double leftVoltage = leftMaster.getMotorOutputVoltage();
-      double rightVoltage = rightMaster.getMotorOutputVoltage();
-      double leftSpeed = encVelToRpm(leftMaster.getSelectedSensorVelocity(0));
-      double rightSpeed = encVelToRpm(rightMaster.getSelectedSensorVelocity(0));
+  private void setLeftRight(double leftPower, double rightPower){
+    if(encVelToRad(leftMaster.getSelectedSensorVelocity(0)) > 0 || encVelToRad(rightMaster.getSelectedSensorVelocity(0)) > 0) {
+      double leftVoltage = leftPower * 12 * (leftMaster.getInverted() ? -1 : 1) * currentScaleFactor; //leftMaster.getMotorOutputVoltage() * (leftMaster.getInverted() ? -1 : 1);
+      double rightVoltage = rightPower * 12 * (rightMaster.getInverted() ? 1 : -1) * currentScaleFactor; //rightMaster.getMotorOutputVoltage() * (rightMaster.getInverted() ? 1 : -1);
+      double leftSpeed = encVelToRad(leftMaster.getSelectedSensorVelocity(0));
+      double rightSpeed = encVelToRad(rightMaster.getSelectedSensorVelocity(0));
       
-      double brownoutScaleFactor = brownoutMonitor.getScalingFactor(leftVoltage, leftSpeed, rightVoltage, rightSpeed, isHighGear());
-      double leftCurrentFactor = currentLimiter.getScalingFactor(leftVoltage * brownoutScaleFactor, leftSpeed);
-      double rightCurrentFactor = currentLimiter.getScalingFactor(rightVoltage * brownoutScaleFactor, rightSpeed);
-      double scaleFactor = Math.max(Math.max(leftCurrentFactor, rightCurrentFactor), brownoutScaleFactor);
+      currentScaleFactor = brownoutMonitor.getScalingFactor(leftVoltage, leftSpeed, rightVoltage, rightSpeed);
       
-      leftSetpoint *= scaleFactor;
-      rightSetpoint *= scaleFactor;
-      SmartDashboard.putNumber("current_scale_factor", scaleFactor);
-    }
-    else{
-        SmartDashboard.putNumber("current_scale_factor", 1.0);
+      leftPower *= currentScaleFactor;
+      rightPower *= currentScaleFactor;
     }
     
-    leftMaster.set(leftSetpoint);
-    rightMaster.set(rightSetpoint);
+    leftMaster.set(leftPower);
+    rightMaster.set(rightPower);
   }
   
   public void setGear(Gear desiredGear){
@@ -76,22 +63,20 @@ public class Drive implements Looper.Loopable {
     return shiftSolenoid.get() == Gear.HIGH.value;
   }
   
-  public void setCurrentLimitingEnabled(boolean enabled){
-    currentLimitingEnabled = enabled;
-  }
-  
-  public double encVelToRpm(double vel){
-    return vel * (1.0 / 4096 * 2 * Math.PI * (isHighGear() ? HIGH_GEAR_RATIO : LOW_GEAR_RATIO));
+  public double encVelToRad(double vel){
+    return vel * 10 / 4096 * 2 * Math.PI * (isHighGear() ? HIGH_GEAR_RATIO : LOW_GEAR_RATIO);
   }
   
   public void driveLeftRight(double left, double right){
-    desiredLeftPower = left;
-    desiredRightPower = right;
+	  setLeftRight(left, right);
   }
   
   public void doArcadeDrive(double throttle, double turn){
-    desiredLeftPower = throttle + turn;
-    desiredRightPower = throttle - turn;
+    setLeftRight(throttle + turn, throttle - turn);
+  }
+  
+  public double getCurrentScalingFactor(){
+	  return currentScaleFactor;
   }
   
   public void setNeutralMode(NeutralMode newMode){
@@ -121,6 +106,7 @@ public class Drive implements Looper.Loopable {
     _talon.configPeakOutputReverse(-1, 0);
     _talon.configVoltageCompSaturation(12, 0);
     _talon.enableVoltageCompensation(true);
+    _talon.configSelectedFeedbackSensor(FeedbackDevice.CTRE_MagEncoder_Relative, 0, 50);
     _talon.set(ControlMode.PercentOutput, 0.0);
     return _talon;
   }

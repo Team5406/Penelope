@@ -5,21 +5,23 @@ import ca._5406.util.Looper;
 import ca._5406.util.Looper.Loopable;
 import ca._5406.util.XboxController;
 import com.ctre.phoenix.motorcontrol.NeutralMode;
+
+import edu.wpi.first.wpilibj.Compressor;
 import edu.wpi.first.wpilibj.IterativeRobot;
 import edu.wpi.first.wpilibj.PowerDistributionPanel;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 
-public class Robot extends IterativeRobot implements Loopable {
+public class Robot extends IterativeRobot {
 
 	public static PowerDistributionPanel pdp;
+	public static Compressor comp;
 
 	private XboxController driverGamepad = new XboxController(0);
 	private Drive drive = Drive.getInstance();
 	private CheesyDriveHelper cheesyDrive = CheesyDriveHelper.getInstance();
 
-	private Looper subsystemLooper = new Looper(drive, 0.01);
-	private Looper controlModeLooper = new Looper(this, 0.05);
+	private Looper controlModeLooper = new Looper(this::update, 0.05);
 
 	private SendableChooser<ControlMode> controlModeChooser;
 	private SendableChooser<ShiftMode> shiftModeChooser;
@@ -36,7 +38,7 @@ public class Robot extends IterativeRobot implements Loopable {
 	@Override
 	public void robotInit() {
 		pdp = new PowerDistributionPanel(15);
-		subsystemLooper.start();
+		comp = new Compressor(0);
 		controlModeLooper.start();
 
 		controlModeChooser = new SendableChooser<>();
@@ -51,25 +53,30 @@ public class Robot extends IterativeRobot implements Loopable {
 		shiftModeChooser = new SendableChooser<>();
 		shiftModeChooser.addDefault(ShiftMode.HOLD_B_TO_BOOST.name(), ShiftMode.HOLD_B_TO_BOOST);
 		shiftModeChooser.addObject(ShiftMode.HOLD_B_TO_PUSH.name(), ShiftMode.HOLD_B_TO_PUSH);
-		shiftModeChooser.addDefault(ShiftMode.HOLD_RB_TO_BOOST.name(), ShiftMode.HOLD_RB_TO_BOOST);
+		shiftModeChooser.addObject(ShiftMode.HOLD_RB_TO_BOOST.name(), ShiftMode.HOLD_RB_TO_BOOST);
 		shiftModeChooser.addObject(ShiftMode.HOLD_RB_TO_PUSH.name(), ShiftMode.HOLD_RB_TO_PUSH);
 		shiftModeChooser.addObject(ShiftMode.TWO_BUTTON_TOGGLE.name(), ShiftMode.TWO_BUTTON_TOGGLE);
 
 		neutralModeChooser = new SendableChooser<>();
 		neutralModeChooser.addDefault(NeutralMode.Coast.name(), NeutralMode.Coast);
 		neutralModeChooser.addObject(NeutralMode.Brake.name(), NeutralMode.Brake);
-
+		
 		SmartDashboard.putBoolean("Switch Control Sides", false);
-		SmartDashboard.putBoolean("Current Limiting", false);
 		SmartDashboard.putBoolean("Square Throttle", false);
 		SmartDashboard.putBoolean("Square Turning", false);
 		SmartDashboard.putData("Control Mode", controlModeChooser);
 		SmartDashboard.putData("Shift Mode", shiftModeChooser);
 		SmartDashboard.putData("Neutral Mode", neutralModeChooser);
 	}
+	
+	public void teleopInit(){
+		update();
+		drive.brownoutMonitor.updateBatteryVoltage();
+	}
 
 	@Override
 	public void teleopPeriodic() {
+		driverGamepad.updateButtons();
 
 		double leftY = driverGamepad.getLeftY();
 		double leftX = driverGamepad.getLeftX();
@@ -171,8 +178,9 @@ public class Robot extends IterativeRobot implements Loopable {
 			}
 			break;
 		}
-
-		driverGamepad.updateButtons();
+		if(pdp.getTotalCurrent() < 20) {
+			drive.brownoutMonitor.updateBatteryVoltage();
+		}
 	}
 
 	private enum ShiftMode {
@@ -183,7 +191,6 @@ public class Robot extends IterativeRobot implements Loopable {
 		ARCADE, SPLIT_ARCADE, TANK, CHEESY, SINGLE_STICK_CHEESY, CHEESY_CAR, CAR
 	}
 
-	@Override
 	public void update() {
 		if(this.isDisabled()){
 			switchPrimaryStick = SmartDashboard.getBoolean("Switch Primary Stick", false);
@@ -194,7 +201,6 @@ public class Robot extends IterativeRobot implements Loopable {
 			selectedControlMode = controlModeChooser.getSelected();
 			selectedShiftMode = shiftModeChooser.getSelected();
 			drive.setNeutralMode(selectedNeutralMode);
-			drive.setCurrentLimitingEnabled(currentLimiting);
 		}
 	}
 }
